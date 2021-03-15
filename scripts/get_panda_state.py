@@ -36,7 +36,7 @@ def get_robot_state_moveit():
 if __name__ == '__main__':
     
     #joint_state_topic = ['joint_states:=/robot/joint_states']
-    rospy.init_node('panda_state_checker_if_it_at_home', anonymous=True)
+    rospy.init_node('panda_state_checker', anonymous=True)
     rate = rospy.Rate(10)
     moveit_commander.roscpp_initialize(sys.argv)
     #想要使用moveit，就必须要提前上传ros关于机械臂的参数等等

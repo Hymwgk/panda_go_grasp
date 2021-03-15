@@ -332,6 +332,7 @@ class MoveItDemo:
                                                DisplayTrajectory,
                                                queue_size=20)
 
+
         # 获取左臂末端执行器名称
         self.end_effector_link = self.selected_arm.get_end_effector_link()
         print("i am here")
@@ -362,6 +363,7 @@ class MoveItDemo:
         table_ground = 0.6
         #桌面尺寸      x  y   z
         table_size = [0.6, 1.2, 0.01]
+
 
         # 将table加入场景当中
         table_pose = PoseStamped()
