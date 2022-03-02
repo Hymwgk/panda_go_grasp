@@ -74,28 +74,16 @@ class MoveItDemo:
                     get_transform = True
                     rospy.loginfo("Test mode")
                 else:
-                    #尝试查看机器人基座base与桌面标签之间的转换
-                    base2marker_trans, self.base2marker_rot = self.tf_listener.lookupTransform('/panda_link0', '/ar_marker_6', rospy.Time(0))
-                    euler = tf.transformations.euler_from_quaternion(self.base2marker_rot)
-                    self.base2marker = tf.transformations.compose_matrix(translate = base2marker_trans, angles = euler)
+                    #相机坐标系相对于base坐标系的位姿
+                    self.btc_trans, self.btc_quater = self.tf_listener.lookupTransform('/kinect', '/panda_link0', rospy.Time(0))
                     #将trans转换成为ndarry
-                    self.base2marker_trans=np.array(base2marker_trans)
-                    #查看gripper到link8之间的变换
-                    gripper2link8_trans, self.gripper2link8_rot = self.tf_listener.lookupTransform( '/panda_EE', '/panda_link8',rospy.Time(0))
-                    euler = tf.transformations.euler_from_quaternion(self.gripper2link8_rot)
-                    self.gripper2link8 = tf.transformations.compose_matrix(translate = gripper2link8_trans, angles = euler)
-                    self.gripper2link8_trans=np.array(gripper2link8_trans)
-                    #查看base到panda_link8的变换，此时就是查询gripper的初始姿态
-                    trans, rot = self.tf_listener.lookupTransform( '/panda_link0', '/panda_link8',rospy.Time(0))
-                    euler = tf.transformations.euler_from_quaternion(rot)
-                    self.base2Initial_link8 = tf.transformations.compose_matrix(translate = trans, angles = euler)
-
+                    self.btc_trans=np.array(self.btc_trans)
+                    self.btc_quater= np.array(self.btc_quater)
                     get_transform = True
                     rospy.loginfo("got transform complete")
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                rospy.loginfo("got transform failed")
-                rospy.sleep(0.5)
-                continue
+                raise SystemError("got transform failed")
+
 
 
         # 初始化场景对象
@@ -107,18 +95,16 @@ class MoveItDemo:
         self.panda_arm = moveit_commander.MoveGroupCommander('panda_arm')
         #创建机械手规划对象
         self.panda_hand=moveit_commander.MoveGroupCommander('hand')
+        #
+        self.panda_arm.set_max_acceleration_scaling_factor(0.2)
+        self.panda_arm.set_max_velocity_scaling_factor(0.5)
         #通过此发布器发布规划的轨迹
         display_trajectory_publisher = rospy.Publisher('/move_group/display_planned_path',
                                                DisplayTrajectory,
                                                queue_size=20)
         # 获取末端执行器名称
         self.end_effector_link = self.panda_arm.get_end_effector_link()
-        print("检测到末端执行器{}".format(self.end_effector_link))
-                        
-        # 创建机械臂父坐标系名称字符
-        reference_frame = 'panda_link0'
-        # 设置父坐标系名称
-        #self.panda_arm.set_pose_reference_frame(reference_frame)
+        rospy.loginfo("End effector detected {}".format(self.end_effector_link))         
 
         # 设置允许机械臂末位姿的错误余量
         self.panda_arm.set_goal_position_tolerance(0.01)#1cm
@@ -128,17 +114,18 @@ class MoveItDemo:
         self.panda_arm.allow_replanning(False)
         self.panda_arm.set_planning_time(5)
         
-        # 设置panda的home姿态
-        Home_positions = [0.04, -0.70, 0.18, -2.80,  0.19, 2.13, 0.92]
+        # 设置panda的初始姿态，和预备姿态
+        self.initial_joints = [0.04, -0.70, 0.18, -2.80,  0.19, 2.13, 0.92]
+        self.ready_joints = [1.544, -0.755, 0.190, -2.713, 0.149, 2.027, 0.799]
         #移动到home
-        self.move_to_home_joint(self.panda_arm,self.Home_joints)
+        self.move_to_joints(self.panda_arm,self.initial_joints,tag="initial pose")
         #张开夹爪
         self.set_gripper(0.08)#张开8cm
-        rospy.set_param("/robot_state", "at_home")
-        rospy.loginfo("Robot  at home")
+        rospy.set_param("/robot_state", "ready")
+        rospy.loginfo("Ready to grasp, initial pose")
 
         ######################开始等待接收夹爪姿态#########################
-        print("Waiting for gripper pose!")
+        rospy.loginfo("Waiting for gripper pose")
         self.callback_done=False
 
         if parameters.test:#测试模式
@@ -155,62 +142,32 @@ class MoveItDemo:
                 rospy.sleep(0.5)
                 continue
 
-
-            #以当前姿态作为规划起始点
-            self.panda_arm.set_start_state_to_current_state()  
-            # 对末端执行器姿态设定目标姿态
-            #self.panda_arm.set_pose_target(target_pose, 'left_gripper')
             
-            # 规划轨迹
-            #traj = self.panda_arm.plan(target_pose.pose)
-            
-            # 执行轨迹，运行到预抓取位置
-            #self.panda_arm.execute(traj)
-            #print(self.end_effector_link)
 
-
-            print('Moving to pre_grasp_pose')
-            #self.panda_arm.pick("test",self.grasp_config,plan_only = True)
-            #traj=self.panda_arm.plan(self.pre_grasp_pose)
-            #self.panda_arm.set_pose_target(self.pre_grasp_pose,end_effector_link="panda_EE")
-            #traj=self.panda_arm.plan()
-
-            #continue
-
-            #success=self.panda_arm.execute(traj)
-
-            #print(target_pose.pose)
-            #设置规划
-            #self.panda_arm.set_planning_time(5)
-            success=self.panda_arm.go(self.pre_grasp_pose,wait=True)
+            #移动至预抓取姿态
+            rospy.set_param("/robot_state", "moving")
+            rospy.loginfo('Move to pre_grasp pose')
+            self.panda_arm.set_start_state_to_current_state()  #以当前姿态作为规划起始点
+            success=self.panda_arm.go(self.pre_grasp_pose_link8,wait=True)
             self.panda_arm.stop()
             self.panda_arm.clear_pose_targets()
-
-            
             
             if not success:
-                print('Failed to move to pre_grasp_pose!')
-                continue
-            
-            print('Move to pre_grasp_pose succeed')
-            #等待机械臂稳定
-            rospy.sleep(1)
+                raise SystemError('Failed to move to pre_grasp pose!')
+            rospy.loginfo('Succeed')
+
+            rospy.sleep(1)#等待机械臂稳定
+
+
             #再设置当前姿态为起始姿态
             self.panda_arm.set_start_state_to_current_state()  
             #
             waypoints = []
             wpose=self.panda_arm.get_current_pose().pose
-            #print("#####wpose.position")
-            #print(wpose.position)
-            #print("#####self.grasp_pose2")
-            #print(self.grasp_pose.position)
-            wpose.position.x=  self.grasp_pose.position.x
-            wpose.position.y=  self.grasp_pose.position.y
-            wpose.position.z=  self.grasp_pose.position.z
-
+            wpose.position.x=  self.grasp_pose_link8.position.x
+            wpose.position.y=  self.grasp_pose_link8.position.y
+            wpose.position.z=  self.grasp_pose_link8.position.z
             waypoints.append(copy.deepcopy(wpose))
-            #wpose = self.panda_arm.get_current_pose().pose
-            #wpose.position.z -= scale * 0.1
 
             #规划从当前位姿，保持姿态，转移到目标夹爪姿态的路径
             (plan, fraction) = self.panda_arm.compute_cartesian_path(
@@ -221,35 +178,23 @@ class MoveItDemo:
             display_trajectory = DisplayTrajectory()
             display_trajectory.trajectory_start = self.panda_arm.get_current_state()
             display_trajectory.trajectory.append(plan)
-            # Publish
             display_trajectory_publisher.publish(display_trajectory)
 
             #执行,并等待这个轨迹执行成功
             new_plan=self.scale_trajectory_speed(plan,0.3)
             self.panda_arm.execute(new_plan,wait=True)
-            #self.panda_arm.shift_pose_target(2,0.05,"panda_link8")
-            #self.panda_arm.go()
-
 
             #执行抓取
-            rospy.sleep(2)
-            print("Grasping")
-            joint_goal = self.panda_hand.get_current_joint_values()
-            joint_goal[0] = 0.015
-            joint_goal[1] = 0.015
-            #plan=self.panda_hand.plan(joint_goal)
-            #new_plan=self.scale_trajectory_speed(plan,0.3)
-            self.panda_hand.go(joint_goal,wait=True)
-            self.panda_hand.stop()
+            rospy.loginfo("Start to grasp")
+            self.set_gripper(0.03)#张开3cm
+            rospy.sleep(1)
 
             ####################抓取完后撤####################
             waypoints = []
             wpose=self.panda_arm.get_current_pose().pose
-            
-            wpose.position.x=  self.pre_grasp_pose.position.x
-            wpose.position.y=  self.pre_grasp_pose.position.y
-            wpose.position.z=  self.pre_grasp_pose.position.z
-
+            wpose.position.x=  self.pre_grasp_pose_link8.position.x
+            wpose.position.y=  self.pre_grasp_pose_link8.position.y
+            wpose.position.z=  self.pre_grasp_pose_link8.position.z
             waypoints.append(copy.deepcopy(wpose))
             
             #规划从当前位姿，保持姿态，转移到目标夹爪姿态的路径
@@ -257,39 +202,26 @@ class MoveItDemo:
                 waypoints,   # waypoints to follow
                 0.01,        # eef_step
                 0.0)         # jump_threshold
-
-            #执行,并等待后撤成功
-            new_plan=self.scale_trajectory_speed(plan,0.6)
-            self.panda_arm.execute(new_plan,wait=True)
-            """
+            #显示轨迹
             display_trajectory = DisplayTrajectory()
             display_trajectory.trajectory_start = self.panda_arm.get_current_state()
             display_trajectory.trajectory.append(plan)
-            # Publish
             display_trajectory_publisher.publish(display_trajectory)
-            """
+            #执行,并等待后撤成功
+            new_plan=self.scale_trajectory_speed(plan,0.6)
+            self.panda_arm.execute(new_plan,wait=True)
 
-            ######################暂时设置直接回到Home############################
-
-            #self.panda_arm.remember_joint_values('resting', joint_positions)#存储当前状态为初始状态
-            #self.start_state =self.panda_arm.get_current_pose(self.end_effector_link)
-            
-            # Set the arm's goal configuration to the be the joint positions
-            self.panda_arm.set_joint_value_target(Home_positions)
-                    
-            # Plan and execute the motion，运动到Home位置
-            self.panda_arm.go()
-            self.panda_arm.stop()
-
-            joint_goal = self.panda_hand.get_current_joint_values()
-            joint_goal[0] = 0.04
-            joint_goal[1] = 0.04
-            self.panda_hand.go(joint_goal, wait=True)
-            self.panda_hand.stop()
-
-            print("Grasp done")
-
-            rospy.sleep(5)
+            ######################移动到预备姿态############################
+            self.move_to_joints(self.panda_arm,self.ready_joints,tag="ready pose")
+            self.set_gripper(0.08)#张开8cm
+            rospy.set_param("/robot_state", "ready")
+            rospy.loginfo("Ready to grasp, ready pose")
+            rospy.sleep(2)
+            if parameters.test:#测试模式
+                self.callback_done=True
+                rospy.set_param("/robot_state", "moving")
+                self.move_to_joints(self.panda_arm,self.initial_joints)
+                rospy.set_param("/robot_state", "ready")
 
 
         # Shut down MoveIt cleanly
@@ -318,18 +250,17 @@ class MoveItDemo:
         temp=quaternion_multiply(temp,quater_)
         return temp[:3]
 
-    def move_to_home_joint(self,group,Home_pose):
+    def move_to_joints(self,group,joints,tag="initial pose"):
         #先从Initial 移动到HOME
-        case  = self.planJointGoal(group,Home_pose)#返回真  就是找到轨迹    
+        case,plan  = self.planJointGoal(group,joints)#返回真  就是找到轨迹    
         if case==2:
-            print(" Home pose Trajectory found;  Move to home")
-            group.go(wait=True)
+            rospy.loginfo("Move to {}".format(tag))
+            group.execute(plan,wait=True)
         elif case==1:
-            print(" Already in home position")
+            rospy.loginfo("Already at {}".format(tag))
 
         else:
-            raise SystemError(" Home pose  trajectory  not found")
-        time.sleep(2)
+            raise SystemError("Home pose  trajectory  not found")
 
     def planJointGoal(self,movegroup,joint_goal,lable='Next'):
         current_joint = movegroup.get_current_joint_values()
@@ -337,14 +268,14 @@ class MoveItDemo:
         #print(current_joint)
         #print(joint_goal)
         if dis_pose<0.008:
-            return 1 #已经到位
+            return 1,None #已经到位
         else:
             movegroup.set_joint_value_target(joint_goal)
             plan = movegroup.plan()
             if not plan.joint_trajectory.points:
-                return 0
+                return 0,plan
             else:#执行规划
-                return 2
+                return 2,plan
 
     
     def Callback(self,data): 
@@ -357,9 +288,9 @@ class MoveItDemo:
         #data.grasps[0]是list中第一个GraspConfig类型的数据，代表的最优的那个抓取配置
         self.grasp_config=data.grasps[0]
         #最终抓取姿态
-        self.grasp_pose=Pose()
+        self.grasp_pose_link8=Pose()
         #预抓取姿态
-        self.pre_grasp_pose=Pose()
+        self.pre_grasp_pose_link8=Pose()
 
         #以下是读取grasp的pose，需要注意的是，此时pose的参考系是谁？是桌面标签参考坐标系，并不是panda_link0
         #读取grasp pose的三个方向向量，转换为ndarray形式
@@ -385,21 +316,21 @@ class MoveItDemo:
         btg_trans = self.btc_rot.dot(ctg_trans.reshape(3,1))+self.btc_trans.reshape(3,1) #[3,1] 
         btg_trans=btg_trans.reshape(3,)#[3,]
 
-        self.grasp_pose.position.x = btg_trans[0]
-        self.grasp_pose.position.y = btg_trans[1]
-        self.grasp_pose.position.z = btg_trans[2]
-        self.grasp_pose.orientation.x = btg_quater[0]
-        self.grasp_pose.orientation.y = btg_quater[1]
-        self.grasp_pose.orientation.z = btg_quater[2]
-        self.grasp_pose.orientation.w = btg_quater[3]
+        self.grasp_pose_link8.position.x = btg_trans[0]
+        self.grasp_pose_link8.position.y = btg_trans[1]
+        self.grasp_pose_link8.position.z = btg_trans[2]
+        self.grasp_pose_link8.orientation.x = btg_quater[0]
+        self.grasp_pose_link8.orientation.y = btg_quater[1]
+        self.grasp_pose_link8.orientation.z = btg_quater[2]
+        self.grasp_pose_link8.orientation.w = btg_quater[3]
 
         #计算预抓取与后撤抓取坐标系在基座坐标系中的位置姿态
-        self.pre_grasp_pose = copy.deepcopy(self.grasp_pose)
+        self.pre_grasp_pose_link8 = copy.deepcopy(self.grasp_pose_link8)
         #计算pre抓取在相机坐标系中的位置
         btp_trans = btg_trans - btg_rot[0]*dis #[3,]
-        self.pre_grasp_pose.position.x = btp_trans[0]
-        self.pre_grasp_pose.position.y = btp_trans[1]
-        self.pre_grasp_pose.position.z = btp_trans[2]
+        self.pre_grasp_pose_link8.position.x = btp_trans[0]
+        self.pre_grasp_pose_link8.position.y = btp_trans[1]
+        self.pre_grasp_pose_link8.position.z = btp_trans[2]
 
 
         #发布目标抓取姿态在base坐标系的位置
@@ -421,51 +352,69 @@ class MoveItDemo:
         self.callback_done=False 
 
     def grasp_test(self): 
-        """机械臂抓取测试，给定一个目标抓取位姿
-        (panda_EE坐标系在panda_link0坐标系下的位置姿态)
         """
+        给定panda_EE坐标系在panda_link0坐标系下的最终抓取姿态  BTEg
+        分别计算:
+        panda_link8坐标系相对于panda_link0坐标系下的预抓取姿态  BTLp
+        panda_link8坐标系相对于panda_link0坐标系下的最终抓取姿态  BTLg
+        """
+        #设置后撤距离(10cm)
+        dis =0.15
 
-        #最终抓取姿态
-        self.grasp_pose=Pose()
-        #预抓取姿态
-        self.pre_grasp_pose=Pose()
-
-        #设置后撤距离(m)
-        dis =0.05
-
-        #给定目标典范抓取坐标系在基座base中的位置姿态
-        btg_quater=np.array([0.98609,0.16538,0.01226,-0.011129])#将姿态转换为四元数形式
-        btg_trans =np.array([0.55608,-0.04333,0.072476])
-        btg_rot = quaternion_matrix(btg_quater)
-
-        self.grasp_pose.position.x = btg_trans[0]
-        self.grasp_pose.position.y = btg_trans[1]
-        self.grasp_pose.position.z = btg_trans[2]
-        self.grasp_pose.orientation.x = btg_quater[0]
-        self.grasp_pose.orientation.y = btg_quater[1]
-        self.grasp_pose.orientation.z = btg_quater[2]
-        self.grasp_pose.orientation.w = btg_quater[3]
-
-        #计算预抓取与后撤抓取坐标系在基座坐标系中的位置姿态
-        self.pre_grasp_pose = copy.deepcopy(self.grasp_pose)
-        #计算pre抓取在相机坐标系中的位置
-        btp_trans = btg_trans - btg_rot[0]*dis #[3,]
-        self.pre_grasp_pose.position.x = btp_trans[0]
-        self.pre_grasp_pose.position.y = btp_trans[1]
-        self.pre_grasp_pose.position.z = btp_trans[2]
+        #BTLg    最终抓取状态时，panda_link8相对于基座的位姿
+        self.grasp_pose_link8=Pose()
+        #BTLp    预抓取状态时，panda_link8相对于基座的位姿
+        self.pre_grasp_pose_link8=Pose()
 
 
-        #发布目标抓取姿态在base坐标系的位置
+        #LTE      panda_EE(夹爪)相对于link8坐标系的位姿(机械臂固定参数值)
+        lte_trans=np.array([0.0000,0.0000,0.1034])
+        lte_quater = np.array([0.0000,0.0000,-0.38268,0.92388])
+        lte_rot = quaternion_matrix(lte_quater)#[4,4]
+        #lte_rot = lte_rot[:3,:3]
+        #BTEg    最终抓取状态时，panda_EE相对于基座的位姿
+        bteg_quater=np.array([0.98609,0.16538,0.01226,-0.011129])#将姿态转换为四元数形式
+        bteg_trans =np.array([0.55608,-0.04333,0.072476])
+        bteg_rot = quaternion_matrix(bteg_quater)
+        #bteg_rot = bteg_rot[:3,:3]#截取旋转矩阵[3,3]
+        #BTEp    预抓取状态时，panda_EE相对于基座的位姿
+        btep_trans = bteg_trans - bteg_rot[:3,2]*dis #[3,]
+        btep_rot = bteg_rot 
+
+        #BTLg    最终抓取状态时，panda_link8相对于基座的位姿
+        btlg_rot = bteg_rot.dot(lte_rot.T)#姿态
+        btlg_trans = bteg_trans - btlg_rot[:3,:3].dot(lte_trans)#位置
+        btlg_quater=quaternion_from_matrix(btlg_rot)
+
+        self.grasp_pose_link8.position.x = btlg_trans[0]
+        self.grasp_pose_link8.position.y = btlg_trans[1]
+        self.grasp_pose_link8.position.z = btlg_trans[2]
+        self.grasp_pose_link8.orientation.x = btlg_quater[0]
+        self.grasp_pose_link8.orientation.y = btlg_quater[1]
+        self.grasp_pose_link8.orientation.z = btlg_quater[2]
+        self.grasp_pose_link8.orientation.w = btlg_quater[3]
+
+        #BTLp    预抓取状态时，panda_link8相对于基座的位姿
+        self.pre_grasp_pose_link8 = copy.deepcopy(self.grasp_pose_link8)
+
+        btlp_rot = btlg_rot
+        btlp_trans = btep_trans - btlp_rot[:3,:3].dot(lte_trans)
+        self.pre_grasp_pose_link8.position.x = btlp_trans[0]
+        self.pre_grasp_pose_link8.position.y = btlp_trans[1]
+        self.pre_grasp_pose_link8.position.z = btlp_trans[2]
+
+
+        #发布BTEg    最终抓取状态时，panda_EE相对于基座的位姿
         self.tf_broadcaster.sendTransform(
-            btg_trans,
-            btg_quater,
+            bteg_trans,
+            bteg_quater,
             rospy.Time.now(),
             "base2grasp",
             "panda_link0")        
-        #发布预备抓取姿态在base坐标系的位置
+        #发布BTEp    预抓取状态时，panda_EE相对于基座的位姿
         self.tf_broadcaster.sendTransform(
-            btp_trans,
-            btg_quater,#与抓取姿态相同
+            btep_trans,
+            bteg_quater,#与抓取姿态相同
             rospy.Time.now(),
             "base2pre",
             "panda_link0")   
@@ -528,9 +477,10 @@ class MoveItDemo:
         joint_goal = self.panda_hand.get_current_joint_values()
         joint_goal[0] = oneside
         joint_goal[1] = oneside
-        self.panda_hand.go(joint_goal, wait=True)
-        self.panda_hand.stop()
-        rospy.loginfo("Gripper ready")
+        self.panda_hand.set_joint_value_target(joint_goal)
+        plan=self.panda_hand.plan()
+        self.panda_hand.execute(plan,wait=True)
+        rospy.loginfo("Gripper action completed")
 
 
 
