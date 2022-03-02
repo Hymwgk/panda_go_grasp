@@ -28,7 +28,7 @@
 
 关于末端几个坐标系位置关系如下图所示：
 
-<img src="/home/wgk/.config/Typora/typora-user-images/image-20210323222536538.png" alt="image-20210323222536538" style="zoom: 40%;" /><img src="/home/wgk/.config/Typora/typora-user-images/image-20210323222712987.png" alt="image-20210323222712987" style="zoom: 40%;" /><img src="/home/wgk/.config/Typora/typora-user-images/image-20210323222920761.png" alt="image-20210323222920761" style="zoom: 40%;" /><img src="/home/wgk/.config/Typora/typora-user-images/image-20210323223249480.png" alt="image-20210323223249480" style="zoom:33%;" />
+<img src="README.assets/image-20210323222536538.png" alt="image-20210323222536538" style="zoom: 40%;" /><img src="README.assets/image-20210323222712987.png" alt="image-20210323222712987" style="zoom: 40%;" /><img src="README.assets/image-20210323222920761.png" alt="image-20210323222920761" style="zoom: 40%;" /><img src="README.assets/image-20210323223249480.png" alt="image-20210323223249480" style="zoom:33%;" />
 
 ## 测试模式
 
